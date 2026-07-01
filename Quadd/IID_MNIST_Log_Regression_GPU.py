@@ -1,0 +1,675 @@
+# =====================================================
+# MULTI-CLASS MNIST: ASYNC vs SYNC FEDERATED LEARNING
+# =====================================================
+
+import numpy as np
+import torch
+import torchvision
+import torchvision.transforms as transforms
+import matplotlib.pyplot as plt
+from collections import defaultdict
+import random
+import math
+
+# -----------------------------
+# Reproducibility
+# -----------------------------
+# torch.manual_seed(0)
+# np.random.seed(0)
+# random.seed(0)
+def set_seed(seed):
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+
+def build_global_training_set(clients):
+    X_all = torch.cat([c["X"] for c in clients],dim=0)
+    y_all = torch.cat([c["y"] for c in clients],dim=0)
+    return X_all, y_all
+
+# =====================================================
+# 1. LOAD MNIST (10-CLASS)
+# =====================================================
+
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize(
+        mean=(0.4914, 0.4822, 0.4465),
+        std=(0.2023, 0.1994, 0.2010)
+    ),
+    transforms.Lambda(lambda x: x.view(-1))  # flatten
+])
+
+trainset = torchvision.datasets.MNIST(
+    root="./data", train=True, download=True, transform=transform
+)
+testset = torchvision.datasets.MNIST(
+    root="./data", train=False, download=True, transform=transform
+)
+
+def load_dataset(dataset):
+    X, y = [], []
+    for x, label in dataset:
+        X.append(x.view(-1))   # already tensor
+        y.append(label)
+    X = torch.stack(X).to(device)
+    y = torch.tensor(y, device=device)
+    return X, y
+
+X_train, y_train = load_dataset(trainset)
+X_test, y_test = load_dataset(testset)
+
+d = X_train.shape[1]
+C = 10  # number of classes
+
+# =====================================================
+# 2. SOFTMAX REGRESSION MODEL
+# =====================================================
+
+def softmax(Z):
+    Z = Z - np.max(Z, axis=1, keepdims=True)
+    expZ = np.exp(Z)
+    return expZ / np.sum(expZ, axis=1, keepdims=True)
+
+def one_hot(y, C):
+    Y = np.zeros((len(y), C))
+    Y[np.arange(len(y)), y] = 1
+    return Y
+
+def softmax_grad(W, X, y):
+    logits = X @ W
+    loss = torch.nn.functional.cross_entropy(logits, y)
+    loss.backward()
+    grad = W.grad.clone()
+    W.grad.zero_()
+    return grad
+
+def accuracy(W, X, y):
+    with torch.no_grad():
+        preds = torch.argmax(X @ W, dim=1)
+        return (preds == y).float().mean().item()
+
+# =====================================================
+# 3. CLIENT CREATION (IID)
+# =====================================================
+
+def create_clients(K=20, samples_per_client=3000, good_fraction=0.3):
+    idx = np.random.permutation(len(X_train))
+    splits = np.array_split(idx, K)
+
+    clients = []
+    num_good = int(K * good_fraction)
+
+    for k in range(K):
+        X = X_train[splits[k]]
+        y = y_train[splits[k]]
+
+        if k < num_good:
+            # GOOD clients: slow, accurate
+            clients.append({
+                "X": X,
+                "y": y,
+                "compute_time": 150, #40,
+                "epochs": 5,
+                "lr": 0.03, #0.05,
+                "sigma": 0.01,
+                "quality": 2.5 #2.0
+            })
+        else:
+            # BAD clients: fast, noisy
+            clients.append({
+                "X": X,
+                "y": y,
+                "compute_time": 5,
+                "epochs": 1,
+                "lr": 0.45, #0.3,
+                "sigma": 0.8, #0.3,
+                "quality": 0.3 #0.5
+            })
+
+    return clients
+
+def lambda_schedule(t, lam_max=0.05, tau=300):
+    """
+    Smooth warm-up for staleness penalty.
+    - lam_max: final lambda value
+    - tau: time constant controlling how fast lambda grows
+    """
+    return lam_max * (1.0 - np.exp(-t / tau))
+
+
+# =====================================================
+# 4. LOCAL TRAINING
+# =====================================================
+
+def local_train(W, client):
+    W_local = W.clone().detach().requires_grad_(True)
+
+    X = client["X"]
+    y = client["y"]
+
+    for _ in range(client["epochs"]):
+        logits = X @ W_local
+        loss = torch.nn.functional.cross_entropy(logits, y)
+        loss.backward()
+
+        grad = W_local.grad
+
+        if client["sigma"] > 0:
+            grad = grad + client["sigma"] * torch.randn_like(grad)
+
+        W_local = (W_local - client["lr"] * grad).detach().requires_grad_(True)
+    return W_local.detach()
+
+# =====================================================
+# 5. ASYNCHRONOUS FL (OUR SCHEME)
+# =====================================================
+
+def async_fl(
+    clients,
+    T=1500,
+    eta=1.0,
+    lam_max=0.05,
+    tau=300
+):
+    W = torch.zeros((d, C), device=device)#np.zeros((d, C))
+    arrivals = defaultdict(list)
+
+    acc_test_log, acc_train_log, wall_log, W_log = [], [], [], []
+
+    X_train_all, y_train_all = build_global_training_set(clients)
+
+    for t in range(T):
+
+        # compute current lambda
+        lam_t = lambda_schedule(t, lam_max=lam_max, tau=tau)
+
+        # clients start training
+        for k, c in enumerate(clients):
+            if t % c["compute_time"] == 0:
+                W_snap = W.copy()
+                W_local = local_train(W_snap, c)
+                delta = W_local - W_snap
+                arrivals[t + c["compute_time"]].append((k, delta, t))
+
+        # aggregate arrivals
+        if t in arrivals:
+            updates = arrivals[t]
+            weights, deltas = [], []
+
+            for k, delta, t0 in updates:
+                staleness = t - t0
+                weight = clients[k]["quality"] * torch.exp(torch.tensor(-lam_t * staleness, device=device))
+                weights.append(weight)
+                deltas.append(delta)
+
+            weights = torch.stack(weights)
+            alphas = weights / torch.sum(weights)
+            deltas = torch.stack(deltas)
+            W += eta * torch.sum(alphas.view(-1, 1, 1) * deltas, dim=0)
+
+        acc_test_log.append(accuracy(W, X_test, y_test))
+        acc_train_log.append(accuracy(W, X_train_all, y_train_all))
+        wall_log.append(t)
+        W_log.append(W.clone().detach().cpu())
+
+    return (
+        np.array(wall_log),
+        np.array(acc_test_log),
+        np.array(acc_train_log),
+        np.array(W_log)
+    )
+
+# =====================================================
+# 6. SYNCHRONOUS FL (THEIR SCHEME)
+# =====================================================
+
+def sync_fl(clients, R=120, M=5, eta=1.0):
+    W = np.zeros((d, C))
+    wall = 0
+
+    acc_test_log, acc_train_log, wall_log, W_log = [], [], [], []
+
+    X_train_all, y_train_all = build_global_training_set(clients)
+
+    for _ in range(R):
+        selected = random.sample(range(len(clients)), M)
+        deltas, times = [], []
+
+        for k in selected:
+            c = clients[k]
+            W_local = local_train(W, c)
+            deltas.append(W_local - W)
+            times.append(c["compute_time"])
+
+        wall += max(times)
+        deltas = torch.stack(deltas)
+        W += eta * torch.mean(deltas, dim=0)
+
+        wall_log.append(wall)
+        acc_test_log.append(accuracy(W, X_test, y_test))
+        acc_train_log.append(accuracy(W, X_train_all, y_train_all))
+        W_log.append(W.clone().detach().cpu())
+
+    return np.array(wall_log), np.array(acc_test_log), np.array(acc_train_log), np.array(W_log)
+
+# =====================================================
+# FLANP (STAGE-WISE SYNCHRONOUS PREFIX SELECTION)
+# =====================================================
+
+def flanp_fl(
+    clients,
+    stages=[5, 10, 20],     # prefix sizes
+    rounds_per_stage= 10, #20,
+    eta=1.0
+):
+    """
+    FLANP-style training:
+    - Clients sorted by speed
+    - Stage-wise inclusion of clients
+    - Fully synchronous within each stage
+    """
+    # sort clients by compute_time (fastest first)
+    clients_sorted = sorted(clients, key=lambda c: c["compute_time"])
+
+    W = torch.zeros((d, C), device=device)#np.zeros((d, C))
+    wall = 0
+
+    acc_test_log, acc_train_log, wall_log, W_log = [], [], [], []
+
+    X_train_all, y_train_all = build_global_training_set(clients)
+
+    for stage_size in stages:
+        active_clients = clients_sorted[:stage_size]
+
+        for _ in range(rounds_per_stage):
+            deltas, times = [], []
+
+            for c in active_clients:
+                W_local = local_train(W, c)
+                deltas.append(W_local - W)
+                times.append(c["compute_time"])
+
+            # synchronous barrier
+            wall += max(times)
+            deltas = torch.stack(deltas)
+            W += eta * torch.mean(deltas, dim=0)#np.mean(deltas, axis=0)
+
+            wall_log.append(wall)
+            acc_test_log.append(accuracy(W, X_test, y_test))
+            acc_train_log.append(accuracy(W, X_train_all, y_train_all))
+            W_log.append(W.clone().detach().cpu())
+
+    return (
+        np.array(wall_log),
+        np.array(acc_test_log),
+        np.array(acc_train_log),
+        np.array(W_log)
+    )
+
+# =====================================================
+# POWER-OF-CHOICE (Cho et al.)
+# =====================================================
+
+def power_of_choice_fl(
+    clients,
+    R=120,              # communication rounds
+    m=5,                # number of selected clients
+    d_pool=10,          # candidate pool size (>= m)
+    eta=1.0
+):
+    """
+    Power-of-Choice FL:
+    1. Sample d_pool clients uniformly
+    2. Compute their local losses at current global model
+    3. Select top-m highest loss clients
+    4. Aggregate synchronously
+    """
+
+    W = torch.zeros((d, C), device=device)#np.zeros((d, C))
+    wall = 0
+
+    acc_test_log, acc_train_log, wall_log, W-log = [], [], [], []
+
+    X_train_all, y_train_all = build_global_training_set(clients)
+
+    for _ in range(R):
+
+        # -----------------------------
+        # Step 1: Random candidate pool
+        # -----------------------------
+        candidate_ids = random.sample(range(len(clients)), d_pool)
+
+        # -----------------------------
+        # Step 2: Evaluate local losses
+        # -----------------------------
+        losses = []
+        for k in candidate_ids:
+            c = clients[k]
+            logits = c["X"] @ W
+            loss = torch.nn.functional.cross_entropy(logits, c["y"])
+            losses.append(loss)
+
+        # -----------------------------
+        # Step 3: Select top-m highest loss
+        # -----------------------------
+        losses = torch.stack(losses)
+        sorted_idx = torch.argsort(losses, descending = True)   # descending
+        selected = [candidate_ids[i] for i in sorted_idx[:m].tolist()]
+
+        # -----------------------------
+        # Step 4: Local training
+        # -----------------------------
+        deltas, times = [], []
+
+        for k in selected:
+            c = clients[k]
+            W_local = local_train(W, c)
+            deltas.append(W_local - W)
+            times.append(c["compute_time"])
+
+        # -----------------------------
+        # Step 5: Synchronous aggregation
+        # -----------------------------
+        wall += max(times)
+        deltas = torch.stack(deltas)
+        W += eta * torch.mean(deltas, dim=0)
+
+        wall_log.append(wall)
+        acc_test_log.append(accuracy(W, X_test, y_test))
+        acc_train_log.append(accuracy(W, X_train_all, y_train_all))
+        W_log.append(W.clone().detach().cpu())
+
+    return (
+        np.array(wall_log),
+        np.array(acc_test_log),
+        np.array(acc_train_log),
+        np.array(W_log)
+    )
+
+# =====================================================
+# UNIFIED APPROACH (Generalized FedAvg, Arbitrary Participation)
+# =====================================================
+
+def unified_fl(
+    clients,
+    R=120,              # communication rounds
+    M=5,                # number of participating clients per round
+    eta=1.0,
+    biased_sampling=False
+):
+    """
+    Unified FL (Arbitrary Participation)
+
+    Implements:
+        W_{t+1} = W_t + eta * sum_k q_t^k Δ_t^k
+
+    where q_t^k reflects arbitrary participation.
+    If biased_sampling=True, clients are sampled
+    with probability proportional to their quality
+    (to simulate arbitrary participation bias).
+    """
+
+    W = torch.zeros((d, C), device=device)#np.zeros((d, C))
+    wall = 0
+
+    acc_test_log, acc_train_log, wall_log, W_log = [], [], [], []
+
+    X_train_all, y_train_all = build_global_training_set(clients)
+
+    K = len(clients)
+
+    # sampling probabilities (can be arbitrary)
+    if biased_sampling:
+        qualities = torch.tensor([c["quality"] for c in clients], device = device)
+        probs = (qualities / qualities.sum()).cpu().numpy()
+    else:
+        probs = None  # uniform
+
+    for _ in range(R):
+
+        # -----------------------------
+        # 1. Arbitrary client selection
+        # -----------------------------
+        if biased_sampling:
+            selected = np.random.choice(
+                K, size=M, replace=False, p=probs
+            )
+        else:
+            selected = random.sample(range(K), M)
+
+        deltas, times = [], []
+
+        # -----------------------------
+        # 2. Local training
+        # -----------------------------
+        for k in selected:
+            c = clients[k]
+            W_local = local_train(W, c)
+            deltas.append(W_local - W)
+            times.append(c["compute_time"])
+
+        # -----------------------------
+        # 3. Aggregation
+        # q_t^k = 1/M for selected clients
+        # -----------------------------
+        deltas = torch.stack(deltas)
+        q = 1.0 / M
+
+        W += eta * q * torch.sum(deltas, axis=0)
+
+        # synchronous wall-clock
+        wall += max(times)
+
+        wall_log.append(wall)
+        acc_test_log.append(accuracy(W, X_test, y_test))
+        acc_train_log.append(accuracy(W, X_train_all, y_train_all))
+        W_log.append(W.clone().detach().cpu())
+
+    return (
+        np.array(wall_log),
+        np.array(acc_test_log),
+        np.array(acc_train_log),
+        np.array(W_log)
+    )
+
+# =====================================================
+# 7. RUN MULTI-SEED EXPERIMENT
+# =====================================================
+
+NUM_RUNS = 5 #10
+
+# storage
+async_runs_test = []
+sync_runs_test = []
+flanp_runs_test = []
+poc_runs_test = []
+unified_runs_test = []
+
+async_runs_train = []
+sync_runs_train = []
+flanp_runs_train = []
+poc_runs_train = []
+unified_runs_train = []
+
+for seed in range(NUM_RUNS):
+
+    print(f"Running seed {seed}")
+    set_seed(seed)
+
+    # regenerate clients each run (important!)
+    # clients = create_non_iid_clients()
+    clients = create_clients()
+
+    # run algorithms
+    wall_async, acc_async_test, acc_async_train, W_async = async_fl(
+        clients, T=24000, lam_max=0.05, tau=300
+    )
+
+    wall_sync, acc_sync_test, acc_sync_train, W_sync = sync_fl(clients)
+
+    wall_flanp, acc_flanp_test, acc_flanp_train, W_flanp = flanp_fl(
+        clients, stages=[5, 10, 20, 40], rounds_per_stage=20
+    )
+
+    wall_poc, acc_poc_test, acc_poc_train, W_poc = power_of_choice_fl(
+        clients, R=120, m=5, d_pool=10
+    )
+
+    wall_unified, acc_unified_test, acc_unified_train, W_unified = unified_fl(
+        clients, R=120, M=5, eta=1.0, biased_sampling=True
+    )
+
+    # store results
+    async_runs_test.append(acc_async_test)
+    sync_runs_test.append(acc_sync_test)
+    flanp_runs_test.append(acc_flanp_test)
+    poc_runs_test.append(acc_poc_test)
+    unified_runs_test.append(acc_unified_test)
+
+    async_runs_train.append(acc_async_train)
+    sync_runs_train.append(acc_sync_train)
+    flanp_runs_train.append(acc_flanp_train)
+    poc_runs_train.append(acc_poc_train)
+    unified_runs_train.append(acc_unified_train)
+
+# Convert to numpy arrays
+async_runs_test = np.array(async_runs_test)
+sync_runs_test = np.array(sync_runs_test)
+flanp_runs_test = np.array(flanp_runs_test)
+poc_runs_test = np.array(poc_runs_test)
+unified_runs_test = np.array(unified_runs_test)
+
+async_runs_train = np.array(async_runs_train)
+sync_runs_train = np.array(sync_runs_train)
+flanp_runs_train = np.array(flanp_runs_train)
+poc_runs_train = np.array(poc_runs_train)
+unified_runs_train = np.array(unified_runs_train)
+
+# Means
+async_mean_test = async_runs_test.mean(axis=0)
+sync_mean_test = sync_runs_test.mean(axis=0)
+flanp_mean_test = flanp_runs_test.mean(axis=0)
+poc_mean_test = poc_runs_test.mean(axis=0)
+unified_mean_test = unified_runs_test.mean(axis=0)
+
+async_mean_train = async_runs_train.mean(axis=0)
+sync_mean_train = sync_runs_train.mean(axis=0)
+flanp_mean_train = flanp_runs_train.mean(axis=0)
+poc_mean_train = poc_runs_train.mean(axis=0)
+unified_mean_train = unified_runs_train.mean(axis=0)
+
+
+# =====================================================
+# 8. PLOTS
+# =====================================================
+window = 5 #10
+
+def smooth(y, window=10):
+    if window <= 1:
+        return y
+    return np.convolve(y, np.ones(window)/window, mode='valid')
+
+# Test accuracy
+plt.figure(figsize=(7,4))
+# plt.plot(wall_async_s, acc_async_test, label="QUAAD (ours)")
+# plt.plot(wall_sync, acc_sync_test, label="Synchronous", linewidth=2)
+# plt.plot(wall_flanp, acc_flanp_test, label="FLANP", linestyle="--", linewidth=2)
+# plt.plot(wall_poc, acc_poc_test, label="Power-of-Choice", linestyle=":", linewidth=2)
+# plt.plot(wall_unified, acc_unified_test, label="Unified (Arbitrary Participation)", linestyle="-.", linewidth=2)
+
+plt.plot(wall_async[window-1:], smooth(async_mean_test, window), label="QUAAD (ours)")
+plt.plot(wall_sync[window-1:], smooth(sync_mean_test, window), label="Synchronous", linewidth=2)
+plt.plot(wall_flanp[window-1:], smooth(flanp_mean_test, window), label="FLANP", linestyle="--", linewidth=2)
+plt.plot(wall_poc[window-1:], smooth(poc_mean_test, window), label="Power-of-Choice", linestyle=":", linewidth=2)
+plt.plot(wall_unified[window-1:], smooth(unified_mean_test, window), label="Unified", linestyle="-.", linewidth=2)
+
+plt.xlabel("Wall-clock time")
+plt.ylabel("Test accuracy")
+plt.title("IID MNIST (10-class): Test Accuracy vs Wall-clock Time")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.savefig("plots_mnist_iid_log_regression/Test_accuracy.png",dpi=300,bbox_inches="tight")
+plt.show()
+
+# Training accuracy
+plt.figure(figsize=(7,4))
+# plt.plot(wall_async[window-1:], acc_async_train, label="QUAAD – Train")
+# plt.plot(wall_sync[window-1:], acc_sync_train, label="Sync – Train", linewidth=2)
+# plt.plot(wall_flanp[window-1:], acc_flanp_train, label="FLANP – Train", linestyle="--", linewidth=2)
+# plt.plot(wall_poc[window-1:], acc_poc_train, label="PoC – Train", linestyle=":", linewidth=2)
+# plt.plot(wall_unified[window-1:], acc_unified_train, label="Unified – Train", linestyle="-.", linewidth=2)
+
+plt.plot(wall_async[window-1:], smooth(async_mean_train, window), label="QUAAD (ours)")
+plt.plot(wall_sync[window-1:], smooth(sync_mean_train, window), label="Synchronous", linewidth=2)
+plt.plot(wall_flanp[window-1:], smooth(flanp_mean_train, window), label="FLANP", linestyle="--", linewidth=2)
+plt.plot(wall_poc[window-1:], smooth(poc_mean_train, window), label="Power-of-Choice", linestyle=":", linewidth=2)
+plt.plot(wall_unified[window-1:], smooth(unified_mean_train, window), label="Unified", linestyle="-.", linewidth=2)
+
+plt.xlabel("Wall-clock time")
+plt.ylabel("Training accuracy")
+plt.title("IID MNIST (10-class): Training Accuracy vs Wall-clock Time")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.savefig("plots_mnist_iid_log_regression/Training_accuracy.png",dpi=300,bbox_inches="tight")
+plt.show()
+
+np.savez(
+    f"results_seed_noniid_cifar_log_regression_cpu_{seed}.npz",
+    wall_async=wall_async[window-1:],
+    acc_async_test=smooth(async_mean_test, window),
+    acc_async_train=smooth(async_mean_train, window),
+    wall_sync=wall_sync[window-1:],
+    acc_sync_test=smooth(sync_mean_test, window),
+    acc_sync_train=smooth(sync_mean_train, window),
+    wall_flanp=wall_flanp[window-1:],
+    acc_flanp_test=smooth(flanp_mean_test, window),
+    acc_flanp_train=smooth(flanp_mean_train, window),
+    wall_poc=wall_poc[window-1:],
+    acc_poc_test=smooth(poc_mean_test, window),
+    acc_poc_train=smooth(poc_mean_train, window),
+    wall_unified=wall_unified[window-1:],
+    acc_unified_test=smooth(unified_mean_test, window),
+    acc_unified_train=smooth(unified_mean_train, window),
+    W_async=W_async,
+    W_sync=W_sync,
+    W_flanp=W_flanp,
+    W_poc=W_poc,
+    W_unified=W_unified
+)
+
+# # =====================================================
+# # 8. PLOTS
+# # =====================================================
+
+# # Test accuracy
+# plt.figure(figsize=(7,4))
+# plt.plot(wall_async, acc_async_test, label="QUAAD (ours)")
+# plt.plot(wall_sync, acc_sync_test, label="Synchronous", linewidth=2)
+# plt.plot(wall_flanp, acc_flanp_test, label="FLANP", linestyle="--", linewidth=2)
+# plt.plot(wall_poc, acc_poc_test, label="Power-of-Choice", linestyle=":")
+# plt.plot(wall_unified, acc_unified_test, label="Unified (Arbitrary Participation)", linestyle="-.", linewidth=2)
+# plt.xlabel("Wall-clock time")
+# plt.ylabel("Test accuracy")
+# plt.title("MNIST (10-class) IID: Test Accuracy vs Wall-clock Time")
+# plt.legend()
+# plt.grid(True)
+# plt.tight_layout()
+# plt.show()
+
+# # Training accuracy
+# plt.figure(figsize=(7,4))
+# plt.plot(wall_async, acc_async_train, label="QUAAD – Train")
+# plt.plot(wall_sync, acc_sync_train, label="Sync – Train", linewidth=2)
+# plt.plot(wall_flanp, acc_flanp_train, label="FLANP – Train", linestyle="--", linewidth=2)
+# plt.plot(wall_poc, acc_poc_train, label="PoC – Train", linestyle=":", linewidth=2)
+# plt.plot(wall_unified, acc_unified_train, label="Unified – Train", linestyle="-.", linewidth=2)
+# plt.xlabel("Wall-clock time")
+# plt.ylabel("Training accuracy")
+# plt.title("MNIST (10-class) IID: Training Accuracy vs Wall-clock Time")
+# plt.legend()
+# plt.grid(True)
+# plt.tight_layout()
+# plt.show()
