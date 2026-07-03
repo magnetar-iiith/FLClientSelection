@@ -1854,7 +1854,8 @@ def unified(clients,
 # 8. Multi-Seed Experiment
 # ============================================================
 
-NUM_RUNS = 2
+NUM_RUNS = 4
+NUM_CLIENTS =  50
 
 async_runs_test = []
 sync_runs_test = []
@@ -1875,7 +1876,7 @@ for seed in range(NUM_RUNS):
     set_seed(seed)
 
     # clients = create_non_iid_clients()
-    client_indices = dirichlet_partition(trainset, 20, 0.05, min_size=10) # dirichlet_partition(trainset, 20, 0.3)  #Try dirichlet_partition(trainset, 10, 0.5) for faster run and reduce R=50 and T=800
+    client_indices = dirichlet_partition(trainset, NUM_CLIENTS, 0.05, min_size=10) # dirichlet_partition(trainset, 20, 0.3)  #Try dirichlet_partition(trainset, 10, 0.5) for faster run and reduce R=50 and T=800
     
     # client_ids = list(range(20))
     # random.shuffle(client_ids)
@@ -1884,10 +1885,10 @@ for seed in range(NUM_RUNS):
     # slow_good = client_ids[15:]
     
     clients = []
-    for k in range(20):
+    for k in range(NUM_CLIENTS):
 
         # Strong compute heterogeneity
-        if k < 15:#20 // 2:
+        if k < int(0.75*NUM_CLIENTS):#20 // 2:
             compute_time = np.random.randint(1, 3)#np.random.randint(2)      # fast clients
             quality = 0.5+0.5*np.random.rand()
             clients.append({
@@ -1910,7 +1911,7 @@ for seed in range(NUM_RUNS):
             })
 
 
-    MAX_TIME = 60#20000
+    MAX_TIME = 300#20000
     LOG_INTERVAL = 1#500
 
     lam = 0.05
@@ -1919,16 +1920,16 @@ for seed in range(NUM_RUNS):
     topK = 2
 
     wall_async, test_async, train_async = async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=eta_quaad, lam=lam, topK=topK)
-    wall_sync, test_sync, train_sync = synchronous_fedavg(clients, MAX_TIME, LOG_INTERVAL)
+    #wall_sync, test_sync, train_sync = synchronous_fedavg(clients, MAX_TIME, LOG_INTERVAL)
     wall_poc, test_poc, train_poc = power_of_choice(clients, MAX_TIME, LOG_INTERVAL)
     wall_flanp, test_flanp, train_flanp = flanp(clients, MAX_TIME, LOG_INTERVAL, eta=eta_flanp, lam=lam, mu=0.1, init_m=2, max_m=20)
     wall_unified, test_unified, train_unified = unified(clients, MAX_TIME, LOG_INTERVAL)
     wall_delayhetsampling, test_delayhetsampling, train_delayhetsampling = delayhetsampling(clients, MAX_TIME, LOG_INTERVAL, eta=0.05, lam=0.05, K=5)
 
     async_runs_test.append(test_async)
-    sync_runs_test.append(test_sync)
+    #sync_runs_test.append(test_sync)
     async_runs_train.append(train_async)
-    sync_runs_train.append(train_sync)
+    #sync_runs_train.append(train_sync)
     poc_runs_test.append(test_poc)
     flanp_runs_test.append(test_flanp)
     poc_runs_train.append(train_poc)
@@ -1942,7 +1943,7 @@ for seed in range(NUM_RUNS):
 
     plt.figure()
     plt.plot(wall_async, test_async, label="QUAAD")
-    plt.plot(wall_sync, test_sync, label="Sync")
+    #plt.plot(wall_sync, test_sync, label="Sync")
     plt.plot(wall_poc, test_poc, label="Power-of-Choice")
     plt.plot(wall_flanp, test_flanp, label="FLANP")
     plt.plot(wall_unified, test_unified, label="Unified")
@@ -1956,7 +1957,7 @@ for seed in range(NUM_RUNS):
 
     plt.figure()
     plt.plot(wall_async, train_async, label="QUAAD")
-    plt.plot(wall_sync, train_sync, label="DelayHetSampling")
+    #plt.plot(wall_sync, train_sync, label="DelayHetSampling")
     plt.plot(wall_poc, train_poc, label="Power-of-Choice")
     plt.plot(wall_flanp, train_flanp, label="FLANP")
     plt.plot(wall_unified, train_unified, label="Unified")
@@ -1968,9 +1969,9 @@ for seed in range(NUM_RUNS):
     plt.savefig(f"plots/train_accuracy_{seed}.png", dpi=300)
     plt.show()
     async_runs_test.append(test_async)
-    sync_runs_test.append(test_sync)
+    #sync_runs_test.append(test_sync)
     async_runs_train.append(train_async)
-    sync_runs_train.append(train_sync)
+    #sync_runs_train.append(train_sync)
     poc_runs_test.append(test_poc)
     flanp_runs_test.append(test_flanp)
     poc_runs_train.append(train_poc)
@@ -1982,11 +1983,11 @@ for seed in range(NUM_RUNS):
     
     np.savez(f"results_mnist_fl_gpu_{seed}.npz",
     wall_async=wall_async,
-    wall_sync=wall_sync,
+    #wall_sync=wall_sync,
     async_test=test_async,
-    sync_test=test_sync,
+    #sync_test=test_sync,
     async_train=train_async,
-    sync_train=train_sync,
+    #sync_train=train_sync,
     wall_poc=wall_poc,
     wall_flanp=wall_flanp,
     poc_test=test_poc,
@@ -2005,9 +2006,9 @@ for seed in range(NUM_RUNS):
 
 # Convert to numpy
 async_mean_test = np.mean(async_runs_test, axis=0)
-sync_mean_test = np.mean(sync_runs_test, axis=0)
+#sync_mean_test = np.mean(sync_runs_test, axis=0)
 async_mean_train = np.mean(async_runs_train, axis=0)
-sync_mean_train = np.mean(sync_runs_train, axis=0)
+#sync_mean_train = np.mean(sync_runs_train, axis=0)
 poc_mean_test = np.mean(poc_runs_test, axis=0)
 flanp_mean_test = np.mean(flanp_runs_test, axis=0)
 poc_mean_train = np.mean(poc_runs_train, axis=0)
@@ -2026,7 +2027,7 @@ os.makedirs("plots", exist_ok=True)
 
 plt.figure()
 plt.plot(wall_async, async_mean_test, label="QUAAD")
-plt.plot(wall_sync, sync_mean_test, label="Sync")
+#plt.plot(wall_sync, sync_mean_test, label="Sync")
 plt.plot(wall_poc, poc_mean_test, label="Power-of-Choice")
 plt.plot(wall_flanp, flanp_mean_test, label="FLANP")
 plt.plot(wall_unified, unified_mean_test, label="Unified")
@@ -2041,7 +2042,7 @@ plt.show()
 
 plt.figure()
 plt.plot(wall_async, async_mean_train, label="QUAAD")
-plt.plot(wall_sync, sync_mean_train, label="Sync")
+#plt.plot(wall_sync, sync_mean_train, label="Sync")
 plt.plot(wall_poc, poc_mean_train, label="Power-of-Choice")
 plt.plot(wall_flanp, flanp_mean_train, label="FLANP")
 plt.plot(wall_unified, unified_mean_train, label="Unified")
@@ -2056,11 +2057,11 @@ plt.show()
 np.savez(
     "results_mnist_fl_gpu.npz",
     wall_async=wall_async,
-    wall_sync=wall_sync,
+    #wall_sync=wall_sync,
     async_test=async_mean_test,
-    sync_test=sync_mean_test,
+    #sync_test=sync_mean_test,
     async_train=async_mean_train,
-    sync_train=sync_mean_train,
+    #sync_train=sync_mean_train,
     wall_poc=wall_poc,
     wall_flanp=wall_flanp,
     poc_test=poc_mean_test,
