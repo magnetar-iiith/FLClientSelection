@@ -1926,7 +1926,7 @@ for seed in range(NUM_RUNS):
     lam = 0.05
     eta_quaad = 0.1
     eta_flanp = 0.03
-    topK = 2
+    topK = int(0.1*NUM_CLIENTS)
 
     wall_async, test_async, train_async = async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=eta_quaad, lam=lam, topK=topK)
     #wall_sync, test_sync, train_sync = synchronous_fedavg(clients, MAX_TIME, LOG_INTERVAL)
