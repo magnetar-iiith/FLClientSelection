@@ -685,36 +685,36 @@ def async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=0.1, lam=0.01, topK=2):
     next_log = LOG_INTERVAL
     num_clients = len(clients)
 
+    delta = [] * num_clients
     # for t in range(T):
     while current_time < MAX_TIME:
         # same arrival process as FLANP
         # selected = sample_arrivals(clients, prob=0.05)
         available_clients = sample_arrivals(clients,current_time)
-        delta = [] 
-        for k in available_clients:
-            c = clients[k]
-            local = local_train(W, c)
-            delta.append = model_diff(local, W)
-            del local
+        if len(available_clients) >0:
+                       
+            selected = sorted(clients[available_clients]["quality"],reverse=True)
+            selected =  selected[:min(len(available_clients),topK)]
+            weights, deltas = [], []
 
-        _, selected = sorted(delta,reverse=True)
-   
-        weights, deltas = [], []
+            for k in range(num_clients):
+                if k in selected:
+                    c = clients[k]
+                    local = local_train(W, c)
+                    delta = model_diff(local, W)
+                    del local
+                    w = clients[k]["quality"] #* math.exp(-lam * staleness)
+                    weights.append(w)
+                    deltas.append(delta[k])
 
-        for k in range(num_clients):
-            if k in selected:
-                w = clients[k]["quality"] #* math.exp(-lam * staleness)
-                weights.append(w)
-                deltas.append(delta[k])
+            weights = torch.tensor(weights)
+            if weights.sum() > 0:
+                alphas = weights / weights.sum()
+            else:
+                alphas = torch.ones_like(weights) / len(weights)
 
-        weights = torch.tensor(weights)
-        if weights.sum() > 0:
-            alphas = weights / weights.sum()
-        else:
-            alphas = torch.ones_like(weights) / len(weights)
-
-        for deltak, alpha in zip(deltas, alphas):
-            apply_update(W, deltak, eta * alpha.item())
+            for deltak, alpha in zip(deltas, alphas):
+                apply_update(W, deltak, eta * alpha.item())
 
         wall.append(current_time)
         test_log.append(evaluate(W, test_loader))
