@@ -682,7 +682,8 @@ def generalized_fedavg(
         gamma=0.01,          # local learning rate
         eta=2.0,             # amplification factor
         P=5,                 # amplification interval
-        participation_prob=1.0
+        participation_prob=1.0, 
+        topK=2
     ):
     """
     Algorithm 1 from
@@ -728,7 +729,7 @@ def generalized_fedavg(
         # Available clients
         ######################################################
 
-        available = sample_arrivals(clients)
+        available = sample_arrivals(clients,current_time)
 
         if len(available) == 0:
             current_time += 1
@@ -749,7 +750,8 @@ def generalized_fedavg(
 
             current_time += 1
             continue
-
+        if q.sum() > topK:
+            q[topK:len(q)] = 0.0
         q /= q.sum()
 
         ######################################################
@@ -778,10 +780,10 @@ def generalized_fedavg(
             ##################################################
             # weighted contribution
             ##################################################
-
+            q = torch.tensor(q, dtype=torch.float32,device=device)
             for key in round_update:
-
-                round_update[key] += q[k] * delta[key]
+                #print(q.device, delta[key].device, round_update[key].device)
+                round_update[key] += q[k] * delta[key].to(device)
 
             del local
 
@@ -1383,13 +1385,13 @@ def run_all_algos(  NUM_RUNS        = 4,
         trainset.targets = torch.tensor(labels)
 
 
+        wall_generalized, test_generalized, train_generalized = generalized_fedavg(clients, MAX_TIME, LOG_INTERVAL, gamma=0.01, eta=2.0, P=5, participation_prob=1.0,topK=topK)
         wall_async, test_async, train_async       = async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=eta_quaad, lam=lam, topK=topK)
         wall_poc, test_poc, train_poc             = power_of_choice(clients, MAX_TIME, LOG_INTERVAL)
         wall_flanp, test_flanp, train_flanp       = flanp(clients, MAX_TIME, LOG_INTERVAL, eta=eta_flanp, lam=lam, mu=0.1, init_m=2, max_m=20)
         wall_unified, test_unified, train_unified = unified(clients, MAX_TIME, LOG_INTERVAL)
         wall_delayhetsampling, test_delayhetsampling, train_delayhetsampling = delayhetsampling(clients, MAX_TIME, LOG_INTERVAL, eta=0.05, lam=0.05, K=topK)
-        wall_generalized, test_generalized, train_generalized = generalized_fedavg(clients, MAX_TIME, LOG_INTERVAL, gamma=0.01, eta=2.0, P=5, participation_prob=1.0)
-
+    
         async_runs_test.append(test_async)
         async_runs_train.append(train_async)
         poc_runs_test.append(test_poc)
@@ -1537,4 +1539,4 @@ def run_all_algos(  NUM_RUNS        = 4,
 
     print("\n✅ Experiment Complete – GPU Safe – Results Saved")
 
-run_all_algos(NUM_RUNS=4,NUM_CLIENTS=20,MAX_TIME=30,topK_factor=0.2)
+run_all_algos(NUM_RUNS=4,NUM_CLIENTS=40,MAX_TIME=50,topK_factor=0.2)
