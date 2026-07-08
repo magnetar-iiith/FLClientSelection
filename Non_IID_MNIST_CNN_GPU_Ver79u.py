@@ -680,7 +680,7 @@ def generalized_fedavg(
         MAX_TIME,
         LOG_INTERVAL,
         gamma=0.01,          # local learning rate
-        eta=2.0,             # amplification factor
+        eta=0.1,             # amplification factor
         P=5,                 # amplification interval
         participation_prob=1.0, 
         topK=2
@@ -747,9 +747,9 @@ def generalized_fedavg(
                 q[k] = 1.0
 
         if q.sum() == 0:
-
             current_time += 1
             continue
+        
         if q.sum() > topK:
             q[topK:len(q)] = 0.0
         q /= q.sum()
@@ -868,7 +868,7 @@ def async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=0.1, lam=0.01, topK=2):
                 key=lambda k: clients[k]["quality"],
                 reverse=True
             )
-            selected =  selected[:min(len(selected),topK)]
+            selected =  selected[0:min(len(selected),topK)]
             weights, deltas = [], []
 
             for k in selected:
@@ -1316,7 +1316,7 @@ def run_all_algos(  NUM_RUNS        = 4,
     
 
     lam                         = 0.05
-    eta_quaad                   = 0.1
+    eta_quaad                   = 1
     eta_flanp                   = 0.03
     topK                        = int(topK_factor*NUM_CLIENTS)
     num_classes                 = len(set(label for _, label in trainset))
@@ -1539,4 +1539,4 @@ def run_all_algos(  NUM_RUNS        = 4,
 
     print("\n✅ Experiment Complete – GPU Safe – Results Saved")
 
-run_all_algos(NUM_RUNS=4,NUM_CLIENTS=40,MAX_TIME=50,topK_factor=0.2)
+run_all_algos(NUM_RUNS=4,NUM_CLIENTS=20,MAX_TIME=50,topK_factor=0.1)
