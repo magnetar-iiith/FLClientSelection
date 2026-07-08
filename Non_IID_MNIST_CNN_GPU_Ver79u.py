@@ -7,6 +7,7 @@ import copy
 import math
 import random
 import numpy as np
+from datetime import datetime
 from collections import defaultdict
 
 import torch
@@ -458,7 +459,7 @@ def delayhetsampling(
     ############################################################
     # Main loop
     ############################################################
-
+    print(datetime.now().strftime("%H:%M:%S"))
     while current_time < MAX_TIME:
 
         ########################################################
@@ -617,8 +618,10 @@ def power_of_choice(clients, MAX_TIME, LOG_INTERVAL, m=5,topK=2, eta=0.2):
     last_log = 0
     next_log = LOG_INTERVAL
     # for r in range(R):
+    print(datetime.now().strftime("%H:%M:%S"))
     while current_time < MAX_TIME:
-
+        if current_time%100 == 0 or current_time%15 == 0:
+            print(f"\n Current time in PoC: {current_time}")
         # safety fix
         m_eff = min(m, len(clients))
 
@@ -680,7 +683,7 @@ def generalized_fedavg(
         MAX_TIME,
         LOG_INTERVAL,
         gamma=0.01,          # local learning rate
-        eta=0.1,             # amplification factor
+        eta=2,             # amplification factor
         P=5,                 # amplification interval
         participation_prob=1.0, 
         topK=2
@@ -722,13 +725,14 @@ def generalized_fedavg(
     t0 = 0
 
     ##########################################################
-
+    print(datetime.now().strftime("%H:%M:%S"))
     while current_time < MAX_TIME:
 
         ######################################################
         # Available clients
         ######################################################
-
+        if current_time%100 == 0 :
+            print(f"\n Current time in Gen FedAvg: {current_time}")
         available = sample_arrivals(clients,current_time)
 
         if len(available) == 0:
@@ -857,9 +861,13 @@ def async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=0.1, lam=0.01, topK=2):
 
     # delta = [] * num_clients
     # for t in range(T):
+    print(datetime.now().strftime("%H:%M:%S"))
     while current_time < MAX_TIME:
         # same arrival process as FLANP
         # selected = sample_arrivals(clients, prob=0.05)
+        if current_time%20 == 0:
+            print(f"\n Current time in QUAD: {current_time}")
+
         available_clients = sample_arrivals(clients,current_time)
         if len(available_clients) >0:
                        
@@ -877,7 +885,7 @@ def async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=0.1, lam=0.01, topK=2):
                     local = local_train(W, c)
                     delta = model_diff(local, W)
                     # del local
-                    w = clients[k]["quality"] #* math.exp(-lam * staleness)
+                    w = clients[k]["quality"] * math.exp(-lam * clients[k]["compute_time"])
                     weights.append(w)
                     deltas.append(delta)
                     del local
@@ -930,11 +938,13 @@ def flanp(clients, MAX_TIME, LOG_INTERVAL,
 
         c["iter"] = iter(c["loader"])
 
+    print(datetime.now().strftime("%H:%M:%S"))
     # =====================================================
     # Main loop
     # =====================================================
     while current_time < MAX_TIME:
-
+        if current_time%100 == 0:
+            print(f"\n Current time in FLANP: {current_time}")
         # =================================================
         # 1. Apply updates arriving NOW
         # =================================================
@@ -1101,8 +1111,19 @@ def flanp(clients, MAX_TIME, LOG_INTERVAL,
 
     return wall, test_log, train_log
 
-
 def unified(clients,
+            MAX_TIME,
+            LOG_INTERVAL,
+            eta=0.05,
+            lam=0.05,
+            m=5):
+    wall = []
+    test_log = []
+    train_log = []
+
+    return wall, test_log, train_log
+
+def unified_old(clients,
             MAX_TIME,
             LOG_INTERVAL,
             eta=0.05,
@@ -1326,16 +1347,17 @@ def run_all_algos(  NUM_RUNS        = 4,
     for seed in range(NUM_RUNS):
         print(f"\n==== Seed {seed} ====")
         set_seed(seed)
+        print(datetime.now().strftime("%H:%M:%S"))
 
         # clients = create_non_iid_clients()
         client_indices = dirichlet_partition(trainset, NUM_CLIENTS, 0.05, min_size=10) # dirichlet_partition(trainset, 20, 0.3)  #Try dirichlet_partition(trainset, 10, 0.5) for faster run and reduce R=50 and T=800
         clients         = []      
 
         for k in range(NUM_CLIENTS):
-
+            isGood = np.random.rand()
             # Strong compute heterogeneity
-            if k < int(0.75*NUM_CLIENTS):#20 // 2:
-                compute_time = np.random.randint(1, 3)#np.random.randint(2)      # fast clients
+            if isGood < 0.75:#20 // 2:
+                compute_time = np.random.randint(1, 4)#np.random.randint(2)      # fast clients
                 quality = 0.2+0.8*np.random.rand()
                 clients.append({
                 "indices": client_indices[k],
@@ -1351,7 +1373,7 @@ def run_all_algos(  NUM_RUNS        = 4,
                 for i in idx:
                     z = np.random.rand()
                     if z > quality:
-                        labels[i] = np.random.randint(0,num_classes)
+                        labels[i] = np.random.randint(0,num_classes-1)
                     else:
                         labels[i] = trainset.targets[i]
                 # setting arrival time intervals
@@ -1359,7 +1381,7 @@ def run_all_algos(  NUM_RUNS        = 4,
                         clients[k]["availble"][t] = 1
 
             else:
-                compute_time = 8+np.random.randint(6)    # slow clients
+                compute_time = 9+np.random.randint(6)    # slow clients
                 quality = 0.6+0.4*np.random.rand()
                 clients.append({
                 "indices": client_indices[k],
@@ -1374,7 +1396,7 @@ def run_all_algos(  NUM_RUNS        = 4,
                 for i in idx:
                     z = np.random.rand()
                     if z > quality:
-                        labels[i] = np.random.randint(0,num_classes)
+                        labels[i] = np.random.randint(0,num_classes-1)
                     else:
                         labels[i] = trainset.targets[i]
                 # setting arrival time intervals
@@ -1385,7 +1407,7 @@ def run_all_algos(  NUM_RUNS        = 4,
         trainset.targets = torch.tensor(labels)
 
 
-        wall_generalized, test_generalized, train_generalized = generalized_fedavg(clients, MAX_TIME, LOG_INTERVAL, gamma=0.01, eta=2.0, P=5, participation_prob=1.0,topK=topK)
+        wall_generalized, test_generalized, train_generalized = generalized_fedavg(clients, MAX_TIME, LOG_INTERVAL, gamma=0.01, eta=2.0, P=15, participation_prob=1.0,topK=topK)
         wall_async, test_async, train_async       = async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=eta_quaad, lam=lam, topK=topK)
         wall_poc, test_poc, train_poc             = power_of_choice(clients, MAX_TIME, LOG_INTERVAL)
         wall_flanp, test_flanp, train_flanp       = flanp(clients, MAX_TIME, LOG_INTERVAL, eta=eta_flanp, lam=lam, mu=0.1, init_m=2, max_m=20)
@@ -1539,4 +1561,4 @@ def run_all_algos(  NUM_RUNS        = 4,
 
     print("\n✅ Experiment Complete – GPU Safe – Results Saved")
 
-run_all_algos(NUM_RUNS=4,NUM_CLIENTS=20,MAX_TIME=50,topK_factor=0.1)
+run_all_algos(NUM_RUNS=7,NUM_CLIENTS=50,MAX_TIME=601,topK_factor=0.2)
