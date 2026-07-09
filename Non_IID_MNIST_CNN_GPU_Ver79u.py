@@ -1358,14 +1358,14 @@ def run_all_algos(  NUM_RUNS        = 4,
             # Strong compute heterogeneity
             if isGood < 0.75:#20 // 2:
                 compute_time = np.random.randint(1, 4)#np.random.randint(2)      # fast clients
-                quality = 0.2+0.8*np.random.rand()
+                quality = 0.5+0.5*np.random.rand()
                 clients.append({
                 "indices": client_indices[k],
                 "compute_time": compute_time,
-                # "quality": 0.3,       # noisy
-                "lr": 0.05, # 0.02,           # small LR
-                "local_epochs": 1,    # VERY IMPORTANT
-                "quality": quality, # 0.2        # remove bias advantage
+                # "quality": 0.3,               # noisy
+                "lr": 0.01, # 0.02,             # small LR
+                "local_epochs": 12,             # VERY IMPORTANT
+                "quality": quality,             # remove bias advantage
                 "availble": np.zeros(MAX_TIME)
                 })
                 # introducing errors based on the quality
@@ -1382,12 +1382,12 @@ def run_all_algos(  NUM_RUNS        = 4,
 
             else:
                 compute_time = 9+np.random.randint(6)    # slow clients
-                quality = 0.6+0.4*np.random.rand()
+                quality = 0.8+0.2*np.random.rand()
                 clients.append({
                 "indices": client_indices[k],
                 "compute_time": compute_time,
                 "lr": 0.01,             # small LR
-                "local_epochs": 3,      # VERY IMPORTANT
+                "local_epochs": 16,      # VERY IMPORTANT
                 "quality": quality,      # 4.0        # remove bias advantage
                 "availble": np.zeros(MAX_TIME)            
                 })
@@ -1407,7 +1407,7 @@ def run_all_algos(  NUM_RUNS        = 4,
         trainset.targets = torch.tensor(labels)
 
 
-        wall_generalized, test_generalized, train_generalized = generalized_fedavg(clients, MAX_TIME, LOG_INTERVAL, gamma=0.01, eta=2.0, P=15, participation_prob=1.0,topK=topK)
+        wall_generalized, test_generalized, train_generalized = generalized_fedavg(clients, MAX_TIME, LOG_INTERVAL, gamma=0.01, eta=10.0, P=15, participation_prob=1.0,topK=topK)
         wall_async, test_async, train_async       = async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=eta_quaad, lam=lam, topK=topK)
         wall_poc, test_poc, train_poc             = power_of_choice(clients, MAX_TIME, LOG_INTERVAL)
         wall_flanp, test_flanp, train_flanp       = flanp(clients, MAX_TIME, LOG_INTERVAL, eta=eta_flanp, lam=lam, mu=0.1, init_m=2, max_m=20)
@@ -1561,4 +1561,4 @@ def run_all_algos(  NUM_RUNS        = 4,
 
     print("\n✅ Experiment Complete – GPU Safe – Results Saved")
 
-run_all_algos(NUM_RUNS=7,NUM_CLIENTS=50,MAX_TIME=601,topK_factor=0.2)
+run_all_algos(NUM_RUNS=2,NUM_CLIENTS=10,MAX_TIME=40,topK_factor=0.2)
