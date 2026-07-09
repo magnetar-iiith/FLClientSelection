@@ -807,9 +807,13 @@ def generalized_fedavg(
             current_time += 1
             continue
         
-        if q.sum() > topK:
-            q[topK:len(q)] = 0.0
-        q /= q.sum()
+        while q.sum() > int(topK) and q.sum() !=np.nan :
+            k = np.random.randint(0,len(clients)-1)
+            q[k] = 0
+        if  q.sum() !=np.nan:
+            q /= q.sum()
+        else:
+            continue
 
         ######################################################
         # Aggregate update this round
@@ -942,7 +946,7 @@ def async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=0.1, lam=0.01, topK=2):
                     local = local_train(W, c)
                     delta = model_diff(local, W)
                     # del local
-                    w = clients[k]["quality"] * math.exp(-lam * clients[k]["compute_time"])
+                    w = qualities[k]* math.exp(-lam * clients[k]["compute_time"])
                     weights.append(w)
                     deltas.append(delta)
                     del local
@@ -1414,14 +1418,14 @@ def run_all_algos(  NUM_RUNS        = 4,
             isGood = np.random.rand()
             # Strong compute heterogeneity
             if isGood < 0.75:#20 // 2:
-                compute_time = np.random.randint(1, 4)#np.random.randint(2)      # fast clients
-                quality = 0.2+0.8*np.random.rand()
+                compute_time = np.random.randint(1, 3)#np.random.randint(2)      # fast clients
+                quality = 0.7+0.3*np.random.rand()
                 clients.append({
                 "indices": client_indices[k],
                 "compute_time": compute_time,
                 # "quality": 0.3,       # noisy
-                "lr": 0.05, # 0.02,           # small LR
-                "local_epochs": 1,    # VERY IMPORTANT
+                "lr": 0.01, # 0.02,           # small LR
+                "local_epochs": 10,    # VERY IMPORTANT
                 "quality": quality, # 0.2        # remove bias advantage
                 "availble": np.zeros(MAX_TIME)
                 })
@@ -1430,6 +1434,8 @@ def run_all_algos(  NUM_RUNS        = 4,
                 for i in idx:
                     z = np.random.rand()
                     if z > quality:
+                    #    labels[i] = -1
+                    #    while labels[i] == trainset.targets[i]:
                         labels[i] = np.random.randint(0,num_classes-1)
                     else:
                         labels[i] = trainset.targets[i]
@@ -1439,12 +1445,12 @@ def run_all_algos(  NUM_RUNS        = 4,
 
             else:
                 compute_time = 9+np.random.randint(6)    # slow clients
-                quality = 0.6+0.4*np.random.rand()
+                quality = 0.9+0.1*np.random.rand()
                 clients.append({
                 "indices": client_indices[k],
                 "compute_time": compute_time,
                 "lr": 0.01,             # small LR
-                "local_epochs": 3,      # VERY IMPORTANT
+                "local_epochs": 16,      # VERY IMPORTANT
                 "quality": quality,      # 4.0        # remove bias advantage
                 "availble": np.zeros(MAX_TIME)            
                 })
@@ -1453,6 +1459,8 @@ def run_all_algos(  NUM_RUNS        = 4,
                 for i in idx:
                     z = np.random.rand()
                     if z > quality:
+                        # labels[i] = -1
+                        # while labels[i] != trainset.targets[i]:
                         labels[i] = np.random.randint(0,num_classes-1)
                     else:
                         labels[i] = trainset.targets[i]
@@ -1618,4 +1626,4 @@ def run_all_algos(  NUM_RUNS        = 4,
 
     print("\n✅ Experiment Complete – GPU Safe – Results Saved")
 
-run_all_algos(NUM_RUNS=7,NUM_CLIENTS=50,MAX_TIME=601,topK_factor=0.2)
+run_all_algos(NUM_RUNS=3,NUM_CLIENTS=30,MAX_TIME=40,topK_factor=0.2)

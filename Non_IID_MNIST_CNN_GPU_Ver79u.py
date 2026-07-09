@@ -10,7 +10,7 @@ import numpy as np
 from datetime import datetime
 from collections import defaultdict
 
-#from torch.utils.data import Dataset
+from torch.utils.data import Dataset
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -61,33 +61,68 @@ class CNN(nn.Module):
 # ============================================================
 # 4. Dataset
 # ============================================================
-# class SplitMNIST(Dataset):
-#     def __init__(self, base_dataset, indices):
-#         self.base = base_dataset
-#         self.indices = indices
-#         self.data = base_dataset.data[indices]
-#         self.targets = base_dataset.targets[indices]
-#         self.transform = base_dataset.transform
 
-#     def __len__(self):
-#         return len(self.indices)
-
-#     def __getitem__(self, idx):
-#         x = self.data[idx]
-#         y = self.targets[idx]
-#         return x, y
     
-transform = transforms.ToTensor()
+# transform = transforms.ToTensor()
+# val_size = 5000
+
+# trainset               = torchvision.datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+# #train_size                  = len(train_dataset) - val_size
+# #train_subset, val_subset    = random_split(train_dataset, [train_size, val_size])
+# #trainset                    = train_dataset #SplitMNIST(train_dataset, train_subset.indices)
+# #valset                      = SplitMNIST(train_dataset, val_subset.indices)
+# testset                     = torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform)
+# test_loader                 = DataLoader(testset, batch_size=512, shuffle=False)
+# #val_loader                  = DataLoader(valset, batch_size=256, shuffle=False)
+
 val_size = 5000
 
-trainset               = torchvision.datasets.MNIST(root='./data', train=True, download=True, transform=transform)
-#train_size                  = len(train_dataset) - val_size
-#train_subset, val_subset    = random_split(train_dataset, [train_size, val_size])
-#trainset                    = train_dataset #SplitMNIST(train_dataset, train_subset.indices)
-#valset                      = SplitMNIST(train_dataset, val_subset.indices)
-testset                     = torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform)
-test_loader                 = DataLoader(testset, batch_size=512, shuffle=False)
-#val_loader                  = DataLoader(valset, batch_size=256, shuffle=False)
+
+transform = transforms.ToTensor()
+
+# train_dataset = torchvision.datasets.MNIST(
+#     root='./data', train=True, download=True, transform=transform
+# )
+
+# train_size = len(train_dataset) - val_size
+
+# trainset, valset = random_split(train_dataset, [train_size, val_size])
+# val_loader = DataLoader(valset, batch_size=256, shuffle=False)
+
+val_size        = 5000
+full_trainset   = torchvision.datasets.MNIST(root="./data", train=True,download=True,transform=transform)
+num_train       = len(full_trainset)
+perm            = np.random.permutation(num_train)
+val_indices     = perm[:val_size]
+train_indices   = perm[val_size:]
+
+class SplitMNIST(Dataset):
+    def __init__(self, base_dataset, indices):
+        self.base = base_dataset
+        self.indices = indices
+        self.data = base_dataset.data[indices]
+        self.targets = base_dataset.targets[indices]
+        self.transform = base_dataset.transform
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        x = self.data[idx]
+        y = self.targets[idx]
+        return x, y
+
+valset          = torch.utils.data.Subset(full_trainset, val_indices)
+val_loader      = DataLoader(valset,batch_size=256,shuffle=False)
+
+# trainset        = Subset(full_trainset,train_indices)
+trainset                    = torch.utils.data.Subset(full_trainset, val_indices)
+# trainset        = torchvision.datasets.MNIST(root="./data",train=True,download=False,transform=transform)
+trainset.data   = trainset.data[train_indices]
+trainset.targets= trainset.targets[train_indices]
+
+testset         = torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform)
+test_loader     = DataLoader(testset, batch_size=512, shuffle=False)
 
 
 
@@ -301,8 +336,21 @@ def expected_delay(p,tau,K):
 
     return delay
 
-def estimate_client_quality(model, loader):
-    return evaluate(model, loader)
+def estimate_client_quality(model):
+    #Estimate quality using validation loss. Larger loss -> higher quality
+    # loader = DataLoader(Subset(valset,client["indices_val"]),batch_size=256, shuffle = False)
+    model.eval()
+    total_loss = 0
+    total = 0
+    with torch.no_grad():
+        for x,y in val_loader:
+            x = x.to(device)
+            y = y.to(device)
+            logits = model(x)
+            loss = F.cross_entropy(logits, y , reduction = "sum")
+            total_loss += loss.item()
+            total += y.size(0)
+    return total_loss / total
 
 # ============================================================
 # 7. Algorithms
