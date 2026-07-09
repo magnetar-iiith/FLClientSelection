@@ -336,7 +336,12 @@ def expected_delay(p,tau,K):
 
     return delay
 
-
+def update_eta(eta=1,curr_time=1):
+    if curr_time == 10 or curr_time == 25:
+        return eta/2
+    if curr_time%50 == 0:
+        return 0.9*eta
+    return eta
 # ============================================================
 # 7. Algorithms
 # ============================================================
@@ -957,6 +962,7 @@ def async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=0.1, lam=0.01, topK=2):
             else:
                 alphas = torch.ones_like(weights) / len(weights)
 
+            eta =  update_eta(eta, current_time)
             for delta, alpha in zip(deltas, alphas):
                 apply_update(W, delta, eta * alpha.item())
 
@@ -1398,8 +1404,8 @@ def run_all_algos(  NUM_RUNS        = 4,
     
 
     lam                         = 0.05
-    eta_quaad                   = 1
-    eta_flanp                   = 0.03
+    eta_quaad                   = 2
+    eta_flanp                   = 1
     topK                        = int(topK_factor*NUM_CLIENTS)
     num_classes                 = len(set(label for _, label in trainset))
     labels                      = np.array(trainset.targets)
@@ -1425,7 +1431,7 @@ def run_all_algos(  NUM_RUNS        = 4,
                 "compute_time": compute_time,
                 # "quality": 0.3,       # noisy
                 "lr": 0.01, # 0.02,           # small LR
-                "local_epochs": 10,    # VERY IMPORTANT
+                "local_epochs": 1,    # VERY IMPORTANT
                 "quality": quality, # 0.2        # remove bias advantage
                 "availble": np.zeros(MAX_TIME)
                 })
@@ -1450,7 +1456,7 @@ def run_all_algos(  NUM_RUNS        = 4,
                 "indices": client_indices[k],
                 "compute_time": compute_time,
                 "lr": 0.01,             # small LR
-                "local_epochs": 16,      # VERY IMPORTANT
+                "local_epochs": 2,      # VERY IMPORTANT
                 "quality": quality,      # 4.0        # remove bias advantage
                 "availble": np.zeros(MAX_TIME)            
                 })
@@ -1472,7 +1478,7 @@ def run_all_algos(  NUM_RUNS        = 4,
         trainset.targets = torch.tensor(labels)
 
 
-        wall_generalized, test_generalized, train_generalized = generalized_fedavg(clients, MAX_TIME, LOG_INTERVAL, gamma=0.01, eta=2.0, P=15, participation_prob=1.0,topK=topK)
+        wall_generalized, test_generalized, train_generalized = generalized_fedavg(clients, MAX_TIME, LOG_INTERVAL, gamma=0.01, eta=2.0, P=30, participation_prob=1.0,topK=topK)
         wall_async, test_async, train_async       = async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=eta_quaad, lam=lam, topK=topK)
         wall_poc, test_poc, train_poc             = power_of_choice(clients, MAX_TIME, LOG_INTERVAL)
         wall_flanp, test_flanp, train_flanp       = flanp(clients, MAX_TIME, LOG_INTERVAL, eta=eta_flanp, lam=lam, mu=0.1, init_m=2, max_m=20)
@@ -1626,4 +1632,4 @@ def run_all_algos(  NUM_RUNS        = 4,
 
     print("\n✅ Experiment Complete – GPU Safe – Results Saved")
 
-run_all_algos(NUM_RUNS=3,NUM_CLIENTS=30,MAX_TIME=40,topK_factor=0.2)
+run_all_algos(NUM_RUNS=7,NUM_CLIENTS=50,MAX_TIME=1000,topK_factor=0.2)
