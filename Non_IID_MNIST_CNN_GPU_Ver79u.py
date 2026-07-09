@@ -10,6 +10,7 @@ import numpy as np
 from datetime import datetime
 from collections import defaultdict
 
+#from torch.utils.data import Dataset
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -60,18 +61,35 @@ class CNN(nn.Module):
 # ============================================================
 # 4. Dataset
 # ============================================================
+# class SplitMNIST(Dataset):
+#     def __init__(self, base_dataset, indices):
+#         self.base = base_dataset
+#         self.indices = indices
+#         self.data = base_dataset.data[indices]
+#         self.targets = base_dataset.targets[indices]
+#         self.transform = base_dataset.transform
 
+#     def __len__(self):
+#         return len(self.indices)
+
+#     def __getitem__(self, idx):
+#         x = self.data[idx]
+#         y = self.targets[idx]
+#         return x, y
+    
 transform = transforms.ToTensor()
+val_size = 5000
 
-trainset = torchvision.datasets.MNIST(
-    root='./data', train=True, download=True, transform=transform
-)
+trainset               = torchvision.datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+#train_size                  = len(train_dataset) - val_size
+#train_subset, val_subset    = random_split(train_dataset, [train_size, val_size])
+#trainset                    = train_dataset #SplitMNIST(train_dataset, train_subset.indices)
+#valset                      = SplitMNIST(train_dataset, val_subset.indices)
+testset                     = torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform)
+test_loader                 = DataLoader(testset, batch_size=512, shuffle=False)
+#val_loader                  = DataLoader(valset, batch_size=256, shuffle=False)
 
-testset = torchvision.datasets.MNIST(
-    root='./data', train=False, download=True, transform=transform
-)
 
-test_loader = DataLoader(testset, batch_size=512, shuffle=False)
 
 def dirichlet_partition(dataset, n_clients, alpha, min_size=10):
     labels = dataset.targets.numpy()
@@ -283,6 +301,8 @@ def expected_delay(p,tau,K):
 
     return delay
 
+def estimate_client_quality(model, loader):
+    return evaluate(model, loader)
 
 # ============================================================
 # 7. Algorithms
@@ -871,9 +891,18 @@ def async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=0.1, lam=0.01, topK=2):
         available_clients = sample_arrivals(clients,current_time)
         if len(available_clients) >0:
                        
+            qualities = {}
+            deltas_temp = []
+            for k in available_clients:
+                local = local_train(W, c)
+                delta = model_diff(local, W)
+                deltas_temp.append(delta)
+                qualities[k] = 1.0 / (1.0 + estimate_client_quality(local, test_loader))
+                del local
+
             selected = sorted(
                 available_clients,
-                key=lambda k: clients[k]["quality"],
+                key=lambda k: qualities[k],
                 reverse=True
             )
             selected =  selected[0:min(len(selected),topK)]
@@ -882,14 +911,11 @@ def async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=0.1, lam=0.01, topK=2):
             for k in selected:
                 # if k in selected:
                     c = clients[k]
-                    local = local_train(W, c)
-                    delta = model_diff(local, W)
                     # del local
                     w = clients[k]["quality"] * math.exp(-lam * clients[k]["compute_time"])
                     weights.append(w)
-                    deltas.append(delta)
-                    del local
-
+                    deltas.append(deltas_temp[k])
+                    
             weights = torch.tensor(weights, dtype=torch.float32)
             if weights.sum() > 0:
                 alphas = weights / weights.sum()
@@ -1341,7 +1367,7 @@ def run_all_algos(  NUM_RUNS        = 4,
     eta_flanp                   = 0.03
     topK                        = int(topK_factor*NUM_CLIENTS)
     num_classes                 = len(set(label for _, label in trainset))
-    labels                      = np.array(trainset.targets)
+    labels                      = np.array(trainset)
 
 
     for seed in range(NUM_RUNS):
@@ -1357,14 +1383,14 @@ def run_all_algos(  NUM_RUNS        = 4,
             isGood = np.random.rand()
             # Strong compute heterogeneity
             if isGood < 0.75:#20 // 2:
-                compute_time = np.random.randint(1, 4)#np.random.randint(2)      # fast clients
-                quality = 0.5+0.5*np.random.rand()
+                compute_time = np.random.randint(1, 3)#np.random.randint(2)      # fast clients
+                quality = 0.6+0.4*np.random.rand()
                 clients.append({
                 "indices": client_indices[k],
                 "compute_time": compute_time,
                 # "quality": 0.3,               # noisy
                 "lr": 0.01, # 0.02,             # small LR
-                "local_epochs": 12,             # VERY IMPORTANT
+                "local_epochs": 10,             # VERY IMPORTANT
                 "quality": quality,             # remove bias advantage
                 "availble": np.zeros(MAX_TIME)
                 })
@@ -1373,7 +1399,9 @@ def run_all_algos(  NUM_RUNS        = 4,
                 for i in idx:
                     z = np.random.rand()
                     if z > quality:
-                        labels[i] = np.random.randint(0,num_classes-1)
+                        labels[i] = -1
+                        while labels[i] != trainset.targets[i]:
+                            labels[i] = np.random.randint(0,num_classes-1)
                     else:
                         labels[i] = trainset.targets[i]
                 # setting arrival time intervals
@@ -1382,12 +1410,12 @@ def run_all_algos(  NUM_RUNS        = 4,
 
             else:
                 compute_time = 9+np.random.randint(6)    # slow clients
-                quality = 0.8+0.2*np.random.rand()
+                quality = 0.9+0.1*np.random.rand()
                 clients.append({
                 "indices": client_indices[k],
                 "compute_time": compute_time,
                 "lr": 0.01,             # small LR
-                "local_epochs": 16,      # VERY IMPORTANT
+                "local_epochs": 15,      # VERY IMPORTANT
                 "quality": quality,      # 4.0        # remove bias advantage
                 "availble": np.zeros(MAX_TIME)            
                 })
@@ -1396,7 +1424,8 @@ def run_all_algos(  NUM_RUNS        = 4,
                 for i in idx:
                     z = np.random.rand()
                     if z > quality:
-                        labels[i] = np.random.randint(0,num_classes-1)
+                        while labels[i] != trainset.targets[i]:
+                            labels[i] = np.random.randint(0,num_classes-1)                        
                     else:
                         labels[i] = trainset.targets[i]
                 # setting arrival time intervals
@@ -1555,10 +1584,10 @@ def run_all_algos(  NUM_RUNS        = 4,
         unified_train           =unified_mean_train,
         delayhetsampling_test   =delayhetsampling_mean_test,
         delayhetsampling_train  =delayhetsampling_mean_train,
-        generalized_test   =generalized_mean_test,
-        generalized_train  =generalized_mean_train
+        generalized_test        =generalized_mean_test,
+        generalized_train       =generalized_mean_train
     )
 
     print("\n✅ Experiment Complete – GPU Safe – Results Saved")
 
-run_all_algos(NUM_RUNS=2,NUM_CLIENTS=10,MAX_TIME=40,topK_factor=0.2)
+run_all_algos(NUM_RUNS=2,NUM_CLIENTS=10,MAX_TIME=30,topK_factor=0.2)
