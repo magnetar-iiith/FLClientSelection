@@ -337,7 +337,7 @@ def expected_delay(p,tau,K):
     return delay
 
 def update_eta(eta=1,curr_time=1):
-    if curr_time == 25 or curr_time == 50:
+    if curr_time == 25:
         return eta/2
     if curr_time%50 == 0:
         return 0.9*eta
@@ -1478,7 +1478,7 @@ def run_all_algos(  NUM_RUNS        = 4,
         trainset.targets = torch.tensor(labels)
 
 
-        wall_generalized, test_generalized, train_generalized = generalized_fedavg(clients, MAX_TIME, LOG_INTERVAL, gamma=0.01, eta=10.0, P=15, participation_prob=1.0,topK=topK)
+        wall_generalized, test_generalized, train_generalized = generalized_fedavg(clients, MAX_TIME, LOG_INTERVAL, gamma=0.01, eta=10.0, P=100, participation_prob=1.0,topK=topK)
         wall_async, test_async, train_async       = async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=eta_quaad, lam=lam, topK=topK)
         wall_poc, test_poc, train_poc             = power_of_choice(clients, MAX_TIME, LOG_INTERVAL)
         wall_flanp, test_flanp, train_flanp       = flanp(clients, MAX_TIME, LOG_INTERVAL, eta=eta_flanp, lam=lam, mu=0.1, init_m=2, max_m=20)
@@ -1632,4 +1632,4 @@ def run_all_algos(  NUM_RUNS        = 4,
 
     print("\n✅ Experiment Complete – GPU Safe – Results Saved")
 
-run_all_algos(NUM_RUNS=7,NUM_CLIENTS=10,MAX_TIME=50,topK_factor=0.2)
+run_all_algos(NUM_RUNS=7,NUM_CLIENTS=50,MAX_TIME=600,topK_factor=0.2)
