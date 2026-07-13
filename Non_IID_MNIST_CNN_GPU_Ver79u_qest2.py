@@ -337,10 +337,9 @@ def expected_delay(p,tau,K):
     return delay
 
 def update_eta(eta=1,curr_time=1):
-    if curr_time == 25:
-        return eta/2
-    if curr_time%50 == 0:
-        return 0.9*eta
+    # if curr_time == 25:
+    #     return eta/2
+    
     return eta
 # ============================================================
 # 7. Algorithms
@@ -934,21 +933,15 @@ def async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=0.1, lam=0.01, topK=2):
         if len(available_clients) >0:
 
             qualities = {}
-            for k in available_clients:
-                qualities[k] = 1.0 / (1.0 + estimate_client_quality(W))
-
-            selected = sorted(
-                available_clients,
-                key=lambda k: qualities[k],
-                reverse=True
-            )
-            selected =  selected[:topK]#[0:min(len(selected),topK)]
+            #for k in available_clients:
+                
             weights, deltas = [], []
 
-            for k in selected:
+            for k in available_clients:
                 # if k in selected:
                     c = clients[k]
                     local = local_train(W, c)
+                    qualities[k] = 1.0 / (1.0 + estimate_client_quality(local))
                     delta = model_diff(local, W)
                     # del local
                     w = qualities[k]* math.exp(-lam * clients[k]["compute_time"])
@@ -956,6 +949,13 @@ def async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=0.1, lam=0.01, topK=2):
                     deltas.append(delta)
                     del local
 
+            selected = sorted(
+                available_clients,
+                key=lambda k: qualities[k],
+                reverse=True
+            )
+            selected =  selected[:topK]#[0:min(len(selected),topK)]
+            weights = [w if i in selected else 0.0 for i, w in enumerate(weights)]
             weights = torch.tensor(weights, dtype=torch.float32)
             if weights.sum() > 0:
                 alphas = weights / weights.sum()
@@ -1425,13 +1425,13 @@ def run_all_algos(  NUM_RUNS        = 4,
             # Strong compute heterogeneity
             if isGood < 0.8:#20 // 2:
                 compute_time = np.random.randint(1, 3)#np.random.randint(2)      # fast clients
-                quality = 0.7+0.3*np.random.rand()
+                quality = 0.99+0.01*np.random.rand()
                 clients.append({
                 "indices": client_indices[k],
                 "compute_time": compute_time,
                 # "quality": 0.3,       # noisy
                 "lr": 0.01, # 0.02,           # small LR
-                "local_epochs": 4,    # VERY IMPORTANT
+                "local_epochs": 1,    # VERY IMPORTANT
                 "quality": quality, # 0.2        # remove bias advantage
                 "availble": np.zeros(MAX_TIME)
                 })
@@ -1450,8 +1450,8 @@ def run_all_algos(  NUM_RUNS        = 4,
                         clients[k]["availble"][t] = 1
 
             else:
-                compute_time = 9+np.random.randint(6)    # slow clients
-                quality = 0.9+0.1*np.random.rand()
+                compute_time = 7+np.random.randint(6)    # slow clients
+                quality = 1#0.9+0.1*np.random.rand()
                 clients.append({
                 "indices": client_indices[k],
                 "compute_time": compute_time,
@@ -1462,14 +1462,7 @@ def run_all_algos(  NUM_RUNS        = 4,
                 })
                 # introducing errors based on the quality
                 idx = client_indices[k]
-                for i in idx:
-                    z = np.random.rand()
-                    if z > quality:
-                        # labels[i] = -1
-                        # while labels[i] != trainset.targets[i]:
-                        labels[i] = np.random.randint(0,num_classes-1)
-                    else:
-                        labels[i] = trainset.targets[i]
+   
                 # setting arrival time intervals
                 for t in range(compute_time,MAX_TIME,compute_time):
                         clients[k]["availble"][t] = 1
@@ -1478,7 +1471,7 @@ def run_all_algos(  NUM_RUNS        = 4,
         trainset.targets = torch.tensor(labels)
 
 
-        wall_generalized, test_generalized, train_generalized = generalized_fedavg(clients, MAX_TIME, LOG_INTERVAL, gamma=0.01, eta=10.0, P=100, participation_prob=1.0,topK=topK)
+        wall_generalized, test_generalized, train_generalized = generalized_fedavg(clients, MAX_TIME, LOG_INTERVAL, gamma=0.01, eta=2.0, P=15, participation_prob=1.0,topK=topK)
         wall_async, test_async, train_async       = async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=eta_quaad, lam=lam, topK=topK)
         wall_poc, test_poc, train_poc             = power_of_choice(clients, MAX_TIME, LOG_INTERVAL)
         wall_flanp, test_flanp, train_flanp       = flanp(clients, MAX_TIME, LOG_INTERVAL, eta=eta_flanp, lam=lam, mu=0.1, init_m=2, max_m=20)
@@ -1632,4 +1625,4 @@ def run_all_algos(  NUM_RUNS        = 4,
 
     print("\n✅ Experiment Complete – GPU Safe – Results Saved")
 
-run_all_algos(NUM_RUNS=7,NUM_CLIENTS=50,MAX_TIME=600,topK_factor=0.2)
+run_all_algos(NUM_RUNS=2,NUM_CLIENTS=10,MAX_TIME=30,topK_factor=0.3)
