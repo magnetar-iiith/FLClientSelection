@@ -670,7 +670,6 @@ def synchronous_fedavg(clients, MAX_TIME, LOG_INTERVAL, eta=1.0):
 
     return wall, test_log, train_log
 
-
 def power_of_choice(clients, MAX_TIME, LOG_INTERVAL, m=5,topK=2, eta=0.2):
     W = CNN().to(device)
     wall, test_log, train_log = [], [], []
@@ -919,7 +918,7 @@ def async_fl_noexp(clients, MAX_TIME, LOG_INTERVAL, eta=0.1, lam=0.01, topK=2):
     W = CNN().to(device)
     arrivals = defaultdict(list)
     wall, test_log, train_log = [], [], []
-    current_time = 1
+    current_time = 0
     last_log = 0
     next_log = LOG_INTERVAL
     num_clients = len(clients)
@@ -1265,7 +1264,6 @@ def unified(clients,
 
     return wall, test_log, train_log
 
-
 # ============================================================
 # 6. Multi-Seed Experiment
 # ============================================================
@@ -1504,7 +1502,7 @@ def run_all_algos(  NUM_RUNS        = 4,
     plt.show()
 
     np.savez(
-        "plotsMNIST/results_mnist_fl_gpu.npz",
+        f"{myData}/results_mnist_fl_gpu.npz",
         wall_async              =wall_async,
         async_test              =async_mean_test,
         async_train             =async_mean_train,
@@ -1531,4 +1529,4 @@ def run_all_algos(  NUM_RUNS        = 4,
 # ============================================================
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-run_all_algos(NUM_RUNS=2,NUM_CLIENTS=10,MAX_TIME=30,topK_factor=0.2,partition=0,myData="MNIST")
+run_all_algos(NUM_RUNS=2,NUM_CLIENTS=20,MAX_TIME=100,topK_factor=0.3,partition=0,myData="MNIST")
