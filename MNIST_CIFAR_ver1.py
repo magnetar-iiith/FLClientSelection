@@ -748,239 +748,76 @@ def generalized_fedavg(
         participation_prob=1.0, 
         topK=2
     ):
-    """
-    Algorithm 1 from
-    'A Unified Analysis of Federated Learning with Arbitrary Client Participation'
-
-    Generalized FedAvg with amplified updates.
-
-    This is a synchronous algorithm.
-    """
-
-    ##########################################################
-    # Global model
-    ##########################################################
-
-    W = CNN().to(device)
-
-    wall = []
-    test_log = []
-    train_log = []
-
-    current_time = 0
-
-    ##########################################################
-    # accumulated update u (Algorithm 1 line 2)
-    ##########################################################
-
-    u = {
-        k: torch.zeros_like(v)
-        for k, v in W.state_dict().items()
-    }
-
-    ##########################################################
-    # start of amplification interval
-    ##########################################################
-
-    t0 = 0
-
-    ##########################################################
-    print(datetime.now().strftime("%H:%M:%S"))
-    while current_time < MAX_TIME:
-
-        ######################################################
-        # Available clients
-        ######################################################
-        if current_time%100 == 0 :
-            print(f"\n Current time in Gen FedAvg: {current_time}")
-        available = sample_arrivals(clients,current_time)
-
-        if len(available) == 0:
-            current_time += 1
-            continue
-
-        ######################################################
-        # Participation weights q_t^n
-        ######################################################
-
-        q = np.zeros(len(clients))
-
-        for k in available:
-
-            if random.random() < participation_prob:
-                q[k] = 1.0
-
-        if q.sum() == 0:
-            current_time += 1
-            continue
-        
-        while q.sum() > int(topK) and q.sum() !=np.nan :
-            k = np.random.randint(0,len(clients)-1)
-            q[k] = 0
-        if  q.sum() !=np.nan:
-            q /= q.sum()
-        else:
-            continue
-
-        ######################################################
-        # Aggregate update this round
-        ######################################################
-
-        round_update = {
-            k: torch.zeros_like(v)
-            for k, v in W.state_dict().items()
-        }
-
-        ######################################################
-
-        for k in np.where(q > 0)[0]:
-
-            client = clients[k]
-
-            ##################################################
-            # local SGD
-            ##################################################
-
-            local = local_train(W, client)
-
-            delta = model_diff(local, W)
-
-            ##################################################
-            # weighted contribution
-            ##################################################
-            q = torch.tensor(q, dtype=torch.float32,device=device)
-            for key in round_update:
-                #print(q.device, delta[key].device, round_update[key].device)
-                round_update[key] += q[k] * delta[key].to(device)
-
-            del local
-
-        ######################################################
-        # Line 9:
-        # x_{t+1}=x_t+Σ qΔ
-        ######################################################
-
-        apply_update(W, round_update, 1.0)
-
-        ######################################################
-        # Line 10:
-        # u ← u + Σ qΔ
-        ######################################################
-
-        for key in u:
-
-            u[key] += round_update[key]
-
-        ######################################################
-        # Lines 11-14
-        ######################################################
-
-        if (current_time + 1 - t0) == P:
-
-            ##################################################
-            # Amplification
-            #
-            # x <- x + (η-1)u
-            ##################################################
-
-            apply_update(W, u, eta - 1.0)
-
-            ##################################################
-            # Reset
-            ##################################################
-
-            t0 = current_time + 1
-
-            u = {
-                k: torch.zeros_like(v)
-                for k, v in W.state_dict().items()
-            }
-
-        ######################################################
-        # Logging
-        ######################################################
-
-        wall.append(current_time)
-
-        test_log.append(
-            evaluate(W, test_loader)
-        )
-
-        train_log.append(
-            evaluate_train(W, clients)
-        )
-
-        current_time += 1
-
+    wall, test_log, train_log = [], [], []
+   
     return wall, test_log, train_log
 
 def async_fl_noexp(clients, MAX_TIME, LOG_INTERVAL, eta=0.1, lam=0.01, topK=2):
-    W = CNN().to(device)
-    arrivals = defaultdict(list)
     wall, test_log, train_log = [], [], []
-    current_time = 0
-    last_log = 0
-    next_log = LOG_INTERVAL
-    num_clients = len(clients)
+    return wall, test_log, train_log
+    # current_time = 0
+    # last_log = 0
+    # next_log = LOG_INTERVAL
+    # num_clients = len(clients)
 
-    # delta = [] * num_clients
-    # for t in range(T):
-    print(datetime.now().strftime("%H:%M:%S"))
-    while current_time < MAX_TIME:
-        # same arrival process as FLANP
-        # selected = sample_arrivals(clients, prob=0.05)
-        if current_time%20 == 0:
-            print(f"\n Current time in QUAD: {current_time}")
+    # # delta = [] * num_clients
+    # # for t in range(T):
+    # print(datetime.now().strftime("%H:%M:%S"))
+    # while current_time < MAX_TIME:
+    #     # same arrival process as FLANP
+    #     # selected = sample_arrivals(clients, prob=0.05)
+    #     if current_time%20 == 0:
+    #         print(f"\n Current time in QUAD: {current_time}")
 
-        available_clients = sample_arrivals(clients,current_time)
-        if len(available_clients) >0:
+    #     available_clients = sample_arrivals(clients,current_time)
+    #     if len(available_clients) >0:
 
-            qualities = {}
-            #for k in available_clients:
+    #         qualities = {}
+    #         #for k in available_clients:
                 
-            weights, deltas = [], []
+    #         weights, deltas = [], []
 
-            for k in available_clients:
-                # if k in selected:
-                    c = clients[k]
-                    local = local_train(W, c)
-                    qualities[k] = 1.0 / (1.0 + estimate_client_quality(local))
-                    # qualities[k] = (clients[k]["est_quality"]*clients[k]["num_selected"] +qualities[k] )/(clients[k]["num_selected"]+1)
-                    # clients[k]["num_selected"] +=1
-                    # clients[k]["est_quality"] = qualities[k]
-                    delta = model_diff(local, W)
-                    # del local
-                    w = qualities[k]#* math.exp(-lam * clients[k]["compute_time"])
-                    weights.append(w)
-                    deltas.append(delta)
-                    del local
+    #         for k in available_clients:
+    #             # if k in selected:
+    #                 c = clients[k]
+    #                 local = local_train(W, c)
+    #                 qualities[k] = 1.0 / (1.0 + estimate_client_quality(local))
+    #                 # qualities[k] = (clients[k]["est_quality"]*clients[k]["num_selected"] +qualities[k] )/(clients[k]["num_selected"]+1)
+    #                 # clients[k]["num_selected"] +=1
+    #                 # clients[k]["est_quality"] = qualities[k]
+    #                 delta = model_diff(local, W)
+    #                 # del local
+    #                 w = qualities[k]#* math.exp(-lam * clients[k]["compute_time"])
+    #                 weights.append(w)
+    #                 deltas.append(delta)
+    #                 del local
 
-            selected = sorted(
-                available_clients,
-                key=lambda k: qualities[k],
-                reverse=True
-            )
-            selected =  selected[:topK]#[0:min(len(selected),topK)]
-            weights = [w if i in selected else 0.0 for i, w in enumerate(weights)]
-            weights = torch.tensor(weights, dtype=torch.float32)
-            if weights.sum() > 0:
-                alphas = weights / weights.sum()
-            else:
-                alphas = torch.ones_like(weights) / len(weights)
+    #         selected = sorted(
+    #             available_clients,
+    #             key=lambda k: qualities[k],
+    #             reverse=True
+    #         )
+    #         selected =  selected[:topK]#[0:min(len(selected),topK)]
+    #         weights = [w if i in selected else 0.0 for i, w in enumerate(weights)]
+    #         weights = torch.tensor(weights, dtype=torch.float32)
+    #         if weights.sum() > 0:
+    #             alphas = weights / weights.sum()
+    #         else:
+    #             alphas = torch.ones_like(weights) / len(weights)
 
-            eta =  update_eta(eta, current_time)
-            for delta, alpha in zip(deltas, alphas):
-                apply_update(W, delta, eta * alpha.item())
+    #         eta =  update_eta(eta, current_time)
+    #         for delta, alpha in zip(deltas, alphas):
+    #             apply_update(W, delta, eta * alpha.item())
 
         
-        wall.append(current_time)
-        test_log.append(evaluate(W, test_loader))
-        train_log.append(evaluate_train(W, clients))
-        current_time += 1
+    #     wall.append(current_time)
+    #     test_log.append(evaluate(W, test_loader))
+    #     train_log.append(evaluate_train(W, clients))
+    #     current_time += 1
 
-        torch.cuda.empty_cache()
+    #     torch.cuda.empty_cache()
 
-    return wall, test_log, train_log
+    # return wall, test_log, train_log
 
 def async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=0.1, lam=0.01, topK=2):
     W = CNN().to(device)
@@ -1273,7 +1110,8 @@ def run_all_algos(  NUM_RUNS        = 4,
                     MAX_TIME        = 30 , 
                     topK_factor     = 0.1,
                     partition       = 0,
-                    myData          = "MNIST"):
+                    myData          = "MNIST",
+                    qualityRatio    = 4.0):
     
     # storage of stats
     async_runs_test             = []
@@ -1346,13 +1184,13 @@ def run_all_algos(  NUM_RUNS        = 4,
                         clients[k]["availble"][t] = 1
 
             else:
-                compute_time = 7+np.random.randint(6)    # slow clients
+                compute_time = int(2*qualityRatio)+np.random.randint(6)    # slow clients
                 quality = 1#0.9+0.1*np.random.rand()
                 clients.append({
                 "indices": client_indices[k],
                 "compute_time": compute_time,
                 "lr": 0.01,             # small LR
-                "local_epochs": 5,      # VERY IMPORTANT
+                "local_epochs": int(qualityRatio),      # VERY IMPORTANT
                 "quality": quality,      # 4.0        # remove bias advantage
                 "availble": np.zeros(MAX_TIME),
                 "est_quality": 0,
@@ -1373,7 +1211,7 @@ def run_all_algos(  NUM_RUNS        = 4,
         wall_async, test_async, train_async       = async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=eta_quaad, lam=lam, topK=topK)
         wall_poc, test_poc, train_poc             = power_of_choice(clients, MAX_TIME, LOG_INTERVAL)
         wall_flanp, test_flanp, train_flanp       = flanp(clients, MAX_TIME, LOG_INTERVAL, eta=eta_flanp, lam=lam, mu=0.1, init_m=2, max_m=20)
-        wall_unified, test_unified, train_unified = async_fl_noexp(clients, MAX_TIME, LOG_INTERVAL)
+        wall_unified, test_unified, train_unified = async_fl_noexp(clients, MAX_TIME, LOG_INTERVAL, eta=eta_quaad, lam=lam, topK=topK)
         wall_delayhetsampling, test_delayhetsampling, train_delayhetsampling = delayhetsampling(clients, MAX_TIME, LOG_INTERVAL, eta=0.05, lam=0.05, K=topK)
     
         async_runs_test.append(test_async)
@@ -1389,7 +1227,14 @@ def run_all_algos(  NUM_RUNS        = 4,
         generalized_runs_test.append(test_generalized)
         generalized_runs_train.append(train_generalized)
 
-        os.makedirs(myData, exist_ok=True)
+        dir_name = myData+f"_n{NUM_CLIENTS}_q{int(qualityRatio)}"
+        if partition == 0:
+            dir_name = dir_name+f"_NonIID"
+        if partition == 1:
+            dir_name = dir_name+f"_IID"          
+
+        print(dir_name)
+        os.makedirs(dir_name, exist_ok=True)
 
         plt.figure()
         plt.plot(wall_async, test_async, label="QUAAD")
@@ -1402,7 +1247,7 @@ def run_all_algos(  NUM_RUNS        = 4,
         plt.ylabel("Test Accuracy")
         plt.legend()
         plt.grid()
-        plt.savefig(f"{myData}/test_accuracy_{seed}.png", dpi=300)
+        plt.savefig(f"{dir_name}/test_accuracy_{seed}.png", dpi=300)
         plt.show()
 
         plt.figure()
@@ -1416,7 +1261,7 @@ def run_all_algos(  NUM_RUNS        = 4,
         plt.ylabel("Train Accuracy")
         plt.legend()
         plt.grid()
-        plt.savefig(f"{myData}/train_accuracy_{seed}.png", dpi=300)
+        plt.savefig(f"{dir_name}/train_accuracy_{seed}.png", dpi=300)
         plt.show()
     
         async_runs_test.append(test_async)
@@ -1432,7 +1277,7 @@ def run_all_algos(  NUM_RUNS        = 4,
         generalized_runs_test.append(test_generalized)
         generalized_runs_train.append(train_generalized)
         
-        np.savez(f"{myData}/results_mnist_fl_gpu_{seed}.npz",
+        np.savez(f"{dir_name}/results_fl_gpu_{seed}.npz",
         wall_async=wall_async,
         async_test=test_async,
         async_train=train_async,
@@ -1471,7 +1316,7 @@ def run_all_algos(  NUM_RUNS        = 4,
     # 9. Plot + Save
     # ============================================================
 
-    os.makedirs(myData, exist_ok=True)
+    os.makedirs(dir_name, exist_ok=True)
 
     plt.figure()
     plt.plot(wall_async, async_mean_test, label="QUAAD")
@@ -1484,7 +1329,7 @@ def run_all_algos(  NUM_RUNS        = 4,
     plt.ylabel("Test Accuracy")
     plt.legend()
     plt.grid()
-    plt.savefig(f"{myData}/test_accuracy.png", dpi=300)
+    plt.savefig(f"{dir_name}/test_accuracy.png", dpi=300)
     plt.show()
 
     plt.figure()
@@ -1498,11 +1343,11 @@ def run_all_algos(  NUM_RUNS        = 4,
     plt.ylabel("Train Accuracy")
     plt.legend()
     plt.grid()
-    plt.savefig(f"{myData}/train_accuracy.png", dpi=300)
+    plt.savefig(f"{dir_name}/train_accuracy.png", dpi=300)
     plt.show()
 
     np.savez(
-        f"{myData}/results_mnist_fl_gpu.npz",
+        f"{dir_name}/results_fl_gpu.npz",
         wall_async              =wall_async,
         async_test              =async_mean_test,
         async_train             =async_mean_train,
@@ -1529,4 +1374,6 @@ def run_all_algos(  NUM_RUNS        = 4,
 # ============================================================
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-run_all_algos(NUM_RUNS=2,NUM_CLIENTS=20,MAX_TIME=100,topK_factor=0.3,partition=0,myData="MNIST")
+print(device)
+run_all_algos(NUM_RUNS=8,NUM_CLIENTS=50,MAX_TIME=1200,topK_factor=0.3,partition=0,myData="MNIST", qualityRatio=4.0)
+run_all_algos(NUM_RUNS=8,NUM_CLIENTS=50,MAX_TIME=800,topK_factor=0.3,partition=0,myData="MNIST", qualityRatio=2.0)
