@@ -33,7 +33,7 @@ def set_seed(seed):
 # 2. Model
 # ============================================================
 
-class CNN(nn.Module):
+class CNN_MNIST(nn.Module):
     def __init__(self):
         super().__init__()
         self.conv1 = nn.Conv2d(1, 32, 5)
@@ -50,7 +50,24 @@ class CNN(nn.Module):
 
     def forward(self, x):
         return self.fc2(self.extract_features(x))
+        
+class CNN_CIFAR(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(1, 32, 5)
+        self.conv2 = nn.Conv2d(32, 64, 5)
+        self.fc1 = nn.Linear(1024, 512)
+        self.fc2 = nn.Linear(512, 10)
 
+    def extract_features(self, x):
+        x = F.relu(F.max_pool2d(self.conv1(x), 2))
+        x = F.relu(F.max_pool2d(self.conv2(x), 2))
+        x = x.view(x.size(0), -1)
+        x = F.relu(self.fc1(x))
+        return x
+
+    def forward(self, x):
+        return self.fc2(self.extract_features(x))
 # ============================================================
 # 3. Dataset
 # ============================================================
@@ -183,7 +200,7 @@ def create_non_iid_clients(K=20, samples_per_client=2000,
 # ============================================================
 
 def copy_model(model):
-    new_model = CNN().to(device)
+    new_model = model
     new_model.load_state_dict(model.state_dict())
     return new_model
 
@@ -365,7 +382,6 @@ def delayhetsampling(
         OPT_INTERVAL=50,
         DELAY_ALPHA=0.1):
 
-    W = CNN().to(device)
     W_cov = copy_model(W)
     W_cov.eval()
     arrivals = defaultdict(list)
@@ -635,7 +651,6 @@ def delayhetsampling(
     return wall, test_log, train_log
 
 def synchronous_fedavg(clients, MAX_TIME, LOG_INTERVAL, eta=1.0):
-    W = CNN().to(device)
     wall, test_log, train_log = [], [], []
 
     current_time = 0
@@ -671,7 +686,7 @@ def synchronous_fedavg(clients, MAX_TIME, LOG_INTERVAL, eta=1.0):
     return wall, test_log, train_log
 
 def power_of_choice(clients, MAX_TIME, LOG_INTERVAL, m=5,topK=2, eta=0.2):
-    W = CNN().to(device)
+
     wall, test_log, train_log = [], [], []
 
     current_time = 0
@@ -820,7 +835,7 @@ def async_fl_noexp(clients, MAX_TIME, LOG_INTERVAL, eta=0.1, lam=0.01, topK=2):
     # return wall, test_log, train_log
 
 def async_fl(clients, MAX_TIME, LOG_INTERVAL, eta=0.1, lam=0.01, topK=2):
-    W = CNN().to(device)
+
     arrivals = defaultdict(list)
     wall, test_log, train_log = [], [], []
     current_time = 0
@@ -891,7 +906,6 @@ def flanp(clients, MAX_TIME, LOG_INTERVAL,
           eta=0.05, lam=0.01,
           mu=0.1, init_m=2, max_m=20):
 
-    W = CNN().to(device)
     arrivals = defaultdict(list)
 
     wall, test_log, train_log = [], [], []
@@ -1112,7 +1126,7 @@ def run_all_algos(  NUM_RUNS        = 4,
                     partition       = 0,
                     myData          = "MNIST",
                     qualityRatio    = 4.0):
-    
+    global W
     # storage of stats
     async_runs_test             = []
     sync_runs_test              = []
@@ -1131,6 +1145,10 @@ def run_all_algos(  NUM_RUNS        = 4,
 
     # Create data sets
     DataCreator(val_size=5000, whichdata=myData, batch_size=512)
+    if myData == "MNIST":
+        W = CNN_MNIST().to(device)
+    if myData ==  "CIFAR":
+        W = CNN_CIFAR().to(device)        
 
     # Parameter setting
     LOG_INTERVAL                = 1
@@ -1375,5 +1393,5 @@ def run_all_algos(  NUM_RUNS        = 4,
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
-run_all_algos(NUM_RUNS=8,NUM_CLIENTS=50,MAX_TIME=1200,topK_factor=0.3,partition=0,myData="MNIST", qualityRatio=4.0)
-run_all_algos(NUM_RUNS=8,NUM_CLIENTS=50,MAX_TIME=800,topK_factor=0.3,partition=0,myData="MNIST", qualityRatio=2.0)
+run_all_algos(NUM_RUNS=2,NUM_CLIENTS=10,MAX_TIME=30,topK_factor=0.3,partition=0,myData="MNIST", qualityRatio=4.0)
+#run_all_algos(NUM_RUNS=2,NUM_CLIENTS=10,MAX_TIME=30,topK_factor=0.3,partition=0,myData="MNIST", qualityRatio=2.0)
